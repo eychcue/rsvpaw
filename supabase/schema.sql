@@ -101,3 +101,7 @@ create policy "public read users" on users for select using (true);
 alter table outbox add column if not exists event_id uuid references events(id) on delete set null;
 alter table outbox add column if not exists message_id text;
 create index if not exists outbox_message_id on outbox(message_id);
+
+-- Luma API session (server-side login, no browser)
+alter table users add column if not exists luma_session text;
+alter table users add column if not exists luma_email text;

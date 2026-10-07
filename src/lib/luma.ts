@@ -52,3 +52,25 @@ export async function getLumaEvent(apiId: string) {
     questions: (d.registration_questions ?? []).map((q: any) => ({ label: q.label, required: q.required, type: q.question_type })),
   };
 }
+
+// ── Passwordless Luma login via the same endpoints luma.com uses (no browser, no captcha page) ──
+export async function lumaStartEmail(email: string) {
+  const res = await fetch(`${API}/auth/email/start-with-email`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.message ?? `luma start ${res.status}`);
+  return body;
+}
+
+/** Exchange the emailed code for a Luma session key. */
+export async function lumaVerifyEmail(email: string, code: string) {
+  const res = await fetch(`${API}/auth/email/sign-in-with-code`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, code }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body?.message ?? `luma verify ${res.status}`);
+  const cookie = res.headers.get("set-cookie") ?? "";
+  const session = body?.auth_token ?? cookie.match(/luma\.auth-session-key=([^;]+)/)?.[1] ?? null;
+  return { session, user: body?.user ?? null };
+}

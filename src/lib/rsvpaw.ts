@@ -1,7 +1,7 @@
 // RSVPaw core: discover → score → suggest/auto-register → track → remind → cancel.
 // Shared by the Next.js API routes and the iMessage bot.
 import { db, logActivity } from "./supabase";
-import { discoverLuma, getLumaEvent } from "./luma";
+import { discoverLuma, getLumaEvent, lumaStartEmail, lumaVerifyEmail } from "./luma";
 import { ask, createInstance, parseJson } from "./agent37";
 
 export type User = {
@@ -209,6 +209,17 @@ function gcalLink(ev: any) {
 /** Agent37 drives the Luma / Partiful passwordless login; the user texts back the code. */
 async function startLogin(user: User, site: "luma" | "partiful", id: string) {
   const isEmail = id.includes("@");
+  if ((site as string) === "luma") {
+    if (!isEmail) return text(user, `Luma codes come by email for me — what's the email on your Luma account?`);
+    try {
+      await lumaStartEmail(id);
+      await db().from("users").update({ luma_email: id, pending_action: { type: "otp", site: "luma" } }).eq("id", user.id);
+      await logActivity(user.id, "connect", `Luma sign-in code requested for ${id}`);
+      return text(user, `📩 Luma just emailed a 6-digit code to ${id}. Text it here.`);
+    } catch (e: any) {
+      return text(user, `😵 Luma said: ${e?.message}. Text "connect" to retry.`);
+    }
+  }
   const prompt = site === "luma"
     ? `In your browser go to https://luma.com/signin . Sign in with ${isEmail ? `the email ${id}` : `the phone number ${id} (switch to "Use phone number" if needed)`} and continue. Luma will send a verification code. Stop there and leave the tab open. If you're already signed in as this account, say so. Reply ONLY JSON {"status":"code_sent"|"already_signed_in"|"error","note":""}`
     : `In your browser go to https://partiful.com/login . Enter the phone number ${id} and continue. Partiful will text a verification code. Stop there and leave the tab open. If already logged in, say so. Reply ONLY JSON {"status":"code_sent"|"already_signed_in"|"error","note":""}`;
@@ -226,7 +237,15 @@ async function startLogin(user: User, site: "luma" | "partiful", id: string) {
 }
 
 async function finishLogin(user: User, site: "luma" | "partiful", code: string | null) {
-  if (code) {
+  if (code && site === "luma") {
+    const { data: u } = await db().from("users").select("luma_email").eq("id", user.id).single();
+    try {
+      const { session } = await lumaVerifyEmail(u?.luma_email, code);
+      await db().from("users").update({ luma_session: session }).eq("id", user.id);
+    } catch (e: any) {
+      return text(user, `❌ Luma didn't accept that code (${e?.message}). Text the new code, or "connect" to restart.`);
+    }
+  } else if (code) {
     const r = parseJson<{ ok: boolean; note?: string }>((await ask(await instanceFor(user),
       `In the ${site} login tab in your browser, enter the verification code ${code} and finish signing in (fill in name ${user.name ?? ""} if asked). Reply ONLY JSON {"ok":true|false,"note":""}`)).text);
     if (!r.ok) return text(user, `❌ That code didn't work${r.note ? ` (${r.note})` : ""}. Text the new code, or "connect" to restart.`);
@@ -276,12 +295,12 @@ export async function handleInbound(phone: string, body: string): Promise<{ repl
     const patch = Object.fromEntries(Object.entries(p).filter(([k, v]) => v && !(k === "name" && user.name)));
     await db().from("users").update({ ...patch, pending_action: null }).eq("id", user.id);
     await db().from("users").update({ pending_action: { type: "luma_id" } }).eq("id", user.id);
-    return { reply: `✅ Profile saved!\n\nNow let's connect Luma 🔗 (no password, I never see one). What do you sign in to Luma with — email or phone number? Just text it.` };
+    return { reply: `✅ Profile saved!\n\nNow let's connect Luma 🔗 (no password, I never see one). What's the email on your Luma account? I'll have Luma send you a code.` };
   }
 
   if (pa.type === "luma_id") {
     const id = body.match(/[\w.+-]+@[\w-]+\.[\w.]+/)?.[0] ?? normPhone(body);
-    if (!id) return { reply: "Text the email or phone number you use for Luma 🙂" };
+    if (!id || !id.includes("@")) return { reply: user.email ? `Is it ${user.email}? Reply with your Luma email 🙂` : "Text the email on your Luma account 🙂" };
     if (id.includes("@") && !user.email) await db().from("users").update({ email: id }).eq("id", user.id);
     void startLogin(user, "luma", id);
     return { reply: `🔐 Starting Luma sign-in for ${id}…` };
@@ -308,7 +327,7 @@ export async function handleInbound(phone: string, body: string): Promise<{ repl
 
   if (/^connect\b|^luma\b/.test(t)) {
     await db().from("users").update({ pending_action: { type: "luma_id" } }).eq("id", user.id);
-    return { reply: "🔗 What do you sign in to Luma with — email or phone number?" };
+    return { reply: "🔗 What's the email on your Luma account?" };
   }
   if (/^partiful\b/.test(t)) {
     await db().from("users").update({ pending_action: { type: "partiful_id" } }).eq("id", user.id);
