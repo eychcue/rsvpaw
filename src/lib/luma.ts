@@ -25,7 +25,10 @@ export async function discoverLuma(slug = "sf", limit = 40) {
   const res = await fetch(`${API}/discover/get-paginated-events?pagination_limit=${limit}&slug=${slug}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`luma discover ${res.status}`);
   const { entries } = await res.json();
-  return (entries as any[]).map((e) => ({
+  return (entries as any[])
+    // skip events you can't actually get into
+    .filter((e) => !e.ticket_info?.is_sold_out && !["closed", "not-open", "sold-out"].includes(e.registration_availability))
+    .map((e) => ({
     source: "luma" as const,
     source_id: e.event.api_id,
     url: `https://luma.com/${e.event.url}`,

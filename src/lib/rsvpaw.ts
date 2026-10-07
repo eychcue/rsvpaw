@@ -316,6 +316,12 @@ export async function handleInbound(phone: string, body: string): Promise<{ repl
     return { reply: `🔐 Starting Partiful sign-in for ${id}…` };
   }
 
+  if (pa.type === "otp" && no) {
+    await db().from("users").update({ pending_action: null }).eq("id", user.id);
+    void discoverFor(user.id);
+    return { reply: "👍 Skipped. Finding events for you now… 🔎" };
+  }
+
   if (pa.type === "otp") {
     const code = body.match(/\d{4,8}/)?.[0];
     if (!code) return { reply: "Just text me the code digits 🙂" };
