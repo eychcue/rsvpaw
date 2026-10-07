@@ -299,7 +299,7 @@ export async function handleInbound(phone: string, body: string): Promise<{ repl
   }
 
   if (pa.type === "luma_id") {
-    const id = body.match(/[\w.+-]+@[\w-]+\.[\w.]+/)?.[0] ?? normPhone(body);
+    const id = body.match(/[\w.+-]+@[\w-]+\.[\w.]+/)?.[0] ?? ((yes || /same|that/.test(t)) && user.email ? user.email : normPhone(body));
     if (!id || !id.includes("@")) return { reply: user.email ? `Is it ${user.email}? Reply with your Luma email 🙂` : "Text the email on your Luma account 🙂" };
     if (id.includes("@") && !user.email) await db().from("users").update({ email: id }).eq("id", user.id);
     void startLogin(user, "luma", id);
