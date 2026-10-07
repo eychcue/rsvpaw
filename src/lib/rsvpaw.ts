@@ -216,7 +216,6 @@ async function startLogin(user: User, site: "luma" | "partiful", id: string) {
     await logActivity(user.id, "connected", `Luma ready (email registration as ${id})`);
     return text(user, `✅ Luma ready! I'll register you as ${id} — Luma sends confirmations straight to your inbox. No login needed.\n\nNow Partiful 🎉 What phone number do you use for Partiful? Text it, "same" for this number, or "skip".`);
   }
-  }
   const prompt = site === "luma"
     ? `In your browser go to https://luma.com/signin . Sign in with ${isEmail ? `the email ${id}` : `the phone number ${id} (switch to "Use phone number" if needed)`} and continue. Luma will send a verification code. Stop there and leave the tab open. If you're already signed in as this account, say so. Reply ONLY JSON {"status":"code_sent"|"already_signed_in"|"error","note":""}`
     : `In your browser go to https://partiful.com/login . Enter the phone number ${id} and continue. Partiful will text a verification code. Stop there and leave the tab open. If already logged in, say so. Reply ONLY JSON {"status":"code_sent"|"already_signed_in"|"error","note":""}`;
