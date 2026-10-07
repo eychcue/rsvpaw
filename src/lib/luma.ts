@@ -49,7 +49,10 @@ export async function getLumaEvent(apiId: string) {
   const res = await fetch(`${API}/event/get?event_api_id=${apiId}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`luma event ${res.status}`);
   const d = await res.json();
+  const availability: string = d.registration_availability ?? "open";
   return {
+    open: !d.sold_out && !d.ticket_info?.is_sold_out && !["closed", "not-open", "sold-out"].includes(availability),
+    availability,
     description: docToText(d.description_mirror).trim().slice(0, 4000),
     requires_approval: !!d.ticket_info?.require_approval,
     questions: (d.registration_questions ?? []).map((q: any) => ({ label: q.label, required: q.required, type: q.question_type })),
@@ -76,4 +79,9 @@ export async function lumaVerifyEmail(email: string, code: string) {
   const cookie = res.headers.get("set-cookie") ?? "";
   const session = body?.auth_token ?? cookie.match(/luma\.auth-session-key=([^;]+)/)?.[1] ?? null;
   return { session, user: body?.user ?? null };
+}
+
+/** Live "can I still get in?" check. Errs on the side of open if Luma is unreachable. */
+export async function isLumaOpen(apiId: string) {
+  try { return (await getLumaEvent(apiId)).open; } catch { return true; }
 }

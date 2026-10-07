@@ -1,7 +1,7 @@
 // RSVPaw core: discover → score → suggest/auto-register → track → remind → cancel.
 // Shared by the Next.js API routes and the iMessage bot.
 import { db, logActivity } from "./supabase";
-import { discoverLuma, getLumaEvent, lumaStartEmail, lumaVerifyEmail } from "./luma";
+import { discoverLuma, getLumaEvent, isLumaOpen, lumaStartEmail, lumaVerifyEmail } from "./luma";
 import { ask, createInstance, parseJson } from "./agent37";
 
 export type User = {
@@ -85,7 +85,13 @@ export async function discoverFor(userId: string, opts: { limit?: number; notify
   await logActivity(user.id, "scored", `Agent37 scored ${ue.length} new events for ${user.name ?? user.phone}`);
 
   if (opts.notify !== false) {
-    const ranked = ue.map((u) => ({ ...u, ev: fresh.find((f) => f.id === u.event_id)! })).sort((a, b) => b.score - a.score);
+    const all = ue.map((u) => ({ ...u, ev: fresh.find((f) => f.id === u.event_id)! })).sort((a, b) => b.score - a.score);
+    // Re-check the top candidates live so we never text a dead link
+    const top = all.slice(0, 8);
+    const openFlags = await Promise.all(top.map((r) => isLumaOpen(r.ev.source_id)));
+    const closed = top.filter((_, i) => !openFlags[i]);
+    if (closed.length) await db().from("user_events").update({ status: "closed" }).eq("user_id", user.id).in("event_id", closed.map((c) => c.event_id));
+    const ranked = all.filter((r) => !closed.includes(r));
     const ready = !!(user.email && (user as any).luma_connected);
     const auto = ready ? ranked.filter((r) => r.score >= user.auto_join_threshold).slice(0, 2) : [];
     const picks = ranked.filter((r) => !auto.includes(r)).slice(0, 3);
@@ -120,7 +126,11 @@ export async function register(userId: string, eventId: string, opts: { quiet?: 
   await logActivity(userId, "registering", `Agent37 opening ${ev.url} to register`, eventId);
 
   let questions: { label: string; required: boolean }[] = [];
-  try { questions = (await getLumaEvent(ev.source_id)).questions; } catch {}
+  try {
+    const live = await getLumaEvent(ev.source_id);
+    if (!live.open) return closedInstead(user, ev, opts.quiet);
+    questions = live.questions;
+  } catch {}
 
   const prompt = `Register me for this event using your browser: ${ev.url}
 Register as a guest using my details below (no Luma login needed — if it asks to sign in, choose to continue with email / register with the email below). Click Register / Request to Join and complete the form.
@@ -144,6 +154,23 @@ Use "pending" if it says the host must approve, "approved" if you're confirmed/g
   } catch (e: any) {
     await setStatus(user, ev, "failed", String(e?.message ?? e).slice(0, 200), opts.quiet);
   }
+}
+
+/** Event filled up / closed: say so plainly and offer the next best open pick (no dead link). */
+async function closedInstead(user: User, ev: any, quiet?: boolean) {
+  await db().from("user_events").update({ status: "closed", status_note: "Registration closed / sold out" }).eq("user_id", user.id).eq("event_id", ev.id);
+  await logActivity(user.id, "closed", `${ev.name}: registration closed — skipped`, ev.id);
+  if (quiet) return;
+  const { data: alts } = await db().from("user_events").select("event_id, score, events!inner(name, start_at, source_id)")
+    .eq("user_id", user.id).eq("status", "suggested").is("swipe", null).gte("events.start_at", new Date().toISOString())
+    .order("score", { ascending: false }).limit(5);
+  for (const a of alts ?? []) {
+    const e: any = a.events;
+    if (!(await isLumaOpen(e.source_id))) continue;
+    await text(user, `😕 "${ev.name}" just filled up. Closest open one:\n\n${e.name}\n${fmtTime(e.start_at)} · ${a.score}% match\n\n❤️ this to join`, a.event_id);
+    return;
+  }
+  await text(user, `😕 "${ev.name}" just filled up. I'll keep an eye out for similar events.`);
 }
 
 export async function setStatus(user: User, ev: any, status: string, note?: string, silent = false) {

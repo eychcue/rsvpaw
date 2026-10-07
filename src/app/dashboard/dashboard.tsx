@@ -12,7 +12,7 @@ const when = (iso: string) => new Date(iso).toLocaleString("en-US", { weekday: "
 const STATUS: Record<string, string> = {
   registering: "bg-blue-500/15 text-blue-300", pending: "bg-amber-500/15 text-amber-300", approved: "bg-emerald-500/15 text-emerald-300",
   waitlisted: "bg-orange-500/15 text-orange-300", failed: "bg-red-500/15 text-red-300", cancelled: "bg-zinc-500/15 text-zinc-400",
-  declined: "bg-red-500/15 text-red-300", going: "bg-emerald-500/15 text-emerald-300",
+  declined: "bg-red-500/15 text-red-300", closed: "bg-zinc-500/15 text-zinc-400", going: "bg-emerald-500/15 text-emerald-300",
 };
 
 async function act(body: object) {

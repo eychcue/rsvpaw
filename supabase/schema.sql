@@ -44,7 +44,7 @@ create table if not exists user_events (
   reason text,                             -- one-line "why you'd like it"
   swipe text check (swipe in ('like','dislike')),
   status text not null default 'suggested' check (status in
-    ('suggested','registering','pending','approved','waitlisted','declined','going','cancelled','failed')),
+    ('suggested','registering','pending','approved','waitlisted','declined','going','cancelled','failed','closed')),
   status_note text,
   reminder_sent_at timestamptz,
   calendar_url text,
