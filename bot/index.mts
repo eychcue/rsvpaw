@@ -3,7 +3,7 @@ import { Spectrum, contact, attachment } from "spectrum-ts";
 import { VCARD } from "./vcard";
 import { imessage } from "spectrum-ts/providers/imessage";
 import { db } from "../src/lib/supabase";
-import { handleInbound, sendReminders, checkApprovals } from "../src/lib/rsvpaw";
+import { handleInbound, handleReaction, sendReminders, checkApprovals } from "../src/lib/rsvpaw";
 
 const app = await Spectrum({
   projectId: process.env.PHOTON_PROJECT_ID!,
@@ -26,8 +26,8 @@ async function flush() {
   for (const m of data ?? []) {
     try {
       const space = await im.space.create(m.phone);
-      await space.send(m.body);
-      await db().from("outbox").update({ sent_at: new Date().toISOString() }).eq("id", m.id);
+      const sent = await space.send(m.body);
+      await db().from("outbox").update({ sent_at: new Date().toISOString(), message_id: sent?.id ?? null }).eq("id", m.id);
       console.log("→", m.phone, m.body.slice(0, 60));
     } catch (e: any) {
       await db().from("outbox").update({ sent_at: new Date().toISOString(), error: String(e?.message ?? e).slice(0, 300) }).eq("id", m.id);
@@ -46,6 +46,15 @@ setInterval(async () => {
 
 // Inbound
 for await (const [space, msg] of app.messages) {
+  if (msg.content.type === "reaction" && msg.sender?.id) {
+    const { emoji, target } = msg.content as any;
+    console.log("← tapback", msg.sender.id, emoji, target?.id);
+    try {
+      const reply = await handleReaction(msg.sender.id, emoji, target?.id, target?.content?.text);
+      if (reply) await space.send(reply);
+    } catch (e) { console.error(e); }
+    continue;
+  }
   if (msg.content.type !== "text" || !msg.sender?.id) continue;
   const body = msg.content.text;
   console.log("←", msg.sender.id, body);

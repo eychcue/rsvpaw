@@ -96,3 +96,8 @@ create policy "public read events" on events for select using (true);
 create policy "public read user_events" on user_events for select using (true);
 create policy "public read activity" on activity for select using (true);
 create policy "public read users" on users for select using (true);
+
+-- Tapback support: which event a sent iMessage was about
+alter table outbox add column if not exists event_id uuid references events(id) on delete set null;
+alter table outbox add column if not exists message_id text;
+create index if not exists outbox_message_id on outbox(message_id);

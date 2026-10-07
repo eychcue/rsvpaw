@@ -13,8 +13,8 @@ export type User = {
 const fmtTime = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: "America/Los_Angeles" }) : "TBD";
 
-export async function text(user: Pick<User, "id" | "phone">, body: string) {
-  await db().from("outbox").insert({ user_id: user.id, phone: user.phone, body });
+export async function text(user: Pick<User, "id" | "phone">, body: string, eventId?: string) {
+  await db().from("outbox").insert({ user_id: user.id, phone: user.phone, body, event_id: eventId ?? null });
   await logActivity(user.id, "imessage_out", body);
 }
 
@@ -56,6 +56,7 @@ Events they DISLIKED: ${disliked.join("; ") || "none yet"}
 Events:
 ${events.map((e, i) => `${i}. ${e.name} — host: ${e.host}${e.description ? " — " + e.description.slice(0, 200).replace(/\s+/g, " ") : ""}`).join("\n")}
 
+Rules: events similar to ones they DISLIKED (same vibe, topic, format or host) must score below 35. Events similar to ones they LIKED should score 80+. The reason should cite the liked/disliked event it resembles when relevant.
 Do not use any tools. Reply ONLY with JSON: [{"i":0,"score":87,"reason":"<max 12 words, reference their likes when possible>"}, ...] covering every event.`;
   const { text: out } = await ask(await instanceFor(user), prompt);
   return parseJson<{ i: number; score: number; reason: string }[]>(out);
@@ -88,14 +89,16 @@ export async function discoverFor(userId: string, opts: { limit?: number; notify
     const ready = !!(user.email && (user as any).luma_connected);
     const auto = ready ? ranked.filter((r) => r.score >= user.auto_join_threshold).slice(0, 2) : [];
     const picks = ranked.filter((r) => !auto.includes(r)).slice(0, 3);
-    // ONE digest text, not a flood
-    const lines = [`🐾 Scanned ${found.length} SF events — here's what fits you:`];
-    if (auto.length) lines.push("", "Auto-joining (top match):", ...auto.map((r) => `✅ ${r.ev.name} — ${fmtTime(r.ev.start_at)} (${r.score}%)`));
-    if (picks.length) lines.push("", ...picks.map((r, i) => `${i + 1}. ${r.ev.name} — ${fmtTime(r.ev.start_at)} (${r.score}%)\n   ${r.reason}`));
-    lines.push("", picks.length ? `Reply ${picks.map((_, i) => i + 1).join("/")} to join, "all", or "skip".` : "");
-    if (!ready) lines.push("(Connect Luma first so I can sign you up — text \"connect\")");
+    // Header + one short, tapback-able text per pick
+    const head = [`🐾 Scanned ${found.length} SF events — your top picks:`];
+    if (auto.length) head.push("", ...auto.map((r) => `✅ Auto-joining ${r.ev.name} (${r.score}%)`));
+    if (picks.length) head.push("", `❤️ or 👍 a pick to join · 👎 to pass (I learn from both). Or reply ${picks.map((_, i) => i + 1).join("/")}.`);
+    if (!ready) head.push("(Connect Luma first so I can sign you up — text \"connect\")");
     await db().from("users").update({ pending_action: { type: "pick", event_ids: picks.map((p) => p.event_id) } }).eq("id", user.id);
-    await text(user, lines.join("\n").trim());
+    await text(user, head.join("\n").trim());
+    const nums = ["1️⃣", "2️⃣", "3️⃣"];
+    for (const [i, r] of picks.entries())
+      await text(user, `${nums[i]} ${r.ev.name}\n${fmtTime(r.ev.start_at)} · ${r.score}% match\n${r.reason}`, r.event_id);
     for (const r of auto) void register(user.id, r.event_id, { quiet: true });
   }
   return { scored: ue.length };
@@ -322,4 +325,24 @@ export async function handleInbound(phone: string, body: string): Promise<{ repl
   }
   if (/^(hi|hey|hello|yo|sup)\b/.test(t)) return { reply: `Hey${user.name ? ` ${user.name.split(" ")[0]}` : ""} 🐾 Text "find events", "status", or "connect" (Luma).` };
   return { reply: `Try: "find events", "status", "connect" (Luma), or "partiful". 🐾` };
+}
+
+const LIKE = ["❤️", "♥️", "👍", "‼️", "😍", "🔥", "🙌", "love", "like"];
+const DISLIKE = ["👎", "dislike"];
+
+/** iMessage tapback on one of our event texts → like (register) / dislike (learn). */
+export async function handleReaction(phone: string, emoji: string, targetMessageId: string, targetText?: string): Promise<string | null> {
+  const dir = LIKE.includes(emoji) ? "like" : DISLIKE.includes(emoji) ? "dislike" : null;
+  if (!dir) return null;
+  let { data: sent } = await db().from("outbox").select("user_id, event_id, events(name)").eq("message_id", targetMessageId ?? "").maybeSingle();
+  if (!sent && targetText) // fallback: match on the text we sent
+    ({ data: sent } = await db().from("outbox").select("user_id, event_id, events(name)").eq("phone", phone).eq("body", targetText).not("event_id", "is", null).order("id", { ascending: false }).limit(1).maybeSingle());
+  if (!sent?.event_id) return null;
+  const { data: u } = await db().from("users").select("phone").eq("id", sent.user_id).single();
+  if (u?.phone !== phone) return null;
+  await logActivity(sent.user_id, "imessage_in", `${emoji} on "${(sent as any).events?.name}"`, sent.event_id);
+  void swipe(sent.user_id, sent.event_id, dir);
+  return dir === "like"
+    ? `${emoji} Got it — signing you up for ${(sent as any).events?.name}. I'll find more like this.`
+    : `👎 Noted — I'll skip events like ${(sent as any).events?.name}.`;
 }
