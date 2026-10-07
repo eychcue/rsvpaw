@@ -1,36 +1,30 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 🐾 RSVPaw
 
-## Getting Started
+**Your event concierge over iMessage.** RSVPaw finds SF events you'll love, signs you up (answering the form questions for you), tracks host approvals, adds approved events to your calendar, and checks you can still make it, cancelling for you if not so hosts know who's really coming.
 
-First, run the development server:
+Live: https://rsvpaw.vercel.app · Built at the Agent37 "Build an Agent" hackathon (Oct 7 2026).
 
+## How it works
+1. **Sign up** at rsvpaw.vercel.app → text RSVPaw on iMessage → get a welcome + contact card.
+2. **Connect Luma / Partiful by text.** No passwords: your Agent37 computer starts the login, you text back the one-time code.
+3. **Discover**: pulls Luma's SF discover feed; your Agent37 agent scores every event against your 👍/👎 history, with a reason.
+4. **Register**: reply `1/2/3` (or 👍 on the web deck). The agent opens the event in its browser and fills the form from your profile.
+5. **Track**: pending → approved pings + Google Calendar link.
+6. **Remind**: "Can you still make it?" Reply `no` and it cancels your RSVP.
+
+## Stack
+| | |
+|---|---|
+| **Agent37** | One hosted agent computer per user (Hermes): taste scoring, browser registration/cancel, Luma/Partiful OTP login |
+| **Supabase** | Users (keyed by phone), events, swipes, registration status, activity feed, outbox; Realtime dashboard |
+| **Photon** (spectrum-ts) | iMessage line: inbound/outbound, branded vCard |
+| **Next.js on Vercel** | Signup landing page + live dashboard |
+
+## Run
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+cp .env.example .env.local   # fill in keys
+# Supabase SQL editor: run supabase/schema.sql
+npm i
+npm run dev      # web on :3000
+npm run bot      # iMessage bot (long-lived Photon connection)
 ```
-
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
-
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.

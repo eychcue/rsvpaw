@@ -6,12 +6,16 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "bot": "tsx --env-file=.env.local bot/index.mts"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.117.3",
     "next": "16.4.0",
     "react": "19.3.0",
-    "react-dom": "19.3.0"
+    "react-dom": "19.3.0",
+    "spectrum-ts": "^12.10.1",
+    "tsx": "^4.23.15"
   },
   "devDependencies": {
     "@tailwindcss/turbopack": "^4",
