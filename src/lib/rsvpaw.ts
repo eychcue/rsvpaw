@@ -123,7 +123,7 @@ export async function register(userId: string, eventId: string, opts: { quiet?: 
   try { questions = (await getLumaEvent(ev.source_id)).questions; } catch {}
 
   const prompt = `Register me for this event using your browser: ${ev.url}
-You should already be logged in to Luma in your browser. Click the Register / Request to Join button and complete the form.
+Register as a guest using my details below (no Luma login needed — if it asks to sign in, choose to continue with email / register with the email below). Click Register / Request to Join and complete the form.
 My profile:
 - Name: ${user.name}
 - Email: ${user.email}
@@ -211,14 +211,11 @@ async function startLogin(user: User, site: "luma" | "partiful", id: string) {
   const isEmail = id.includes("@");
   if ((site as string) === "luma") {
     if (!isEmail) return text(user, `Luma codes come by email for me — what's the email on your Luma account?`);
-    try {
-      await lumaStartEmail(id);
-      await db().from("users").update({ luma_email: id, pending_action: { type: "otp", site: "luma" } }).eq("id", user.id);
-      await logActivity(user.id, "connect", `Luma sign-in code requested for ${id}`);
-      return text(user, `📩 Luma just emailed a 6-digit code to ${id}. Text it here.`);
-    } catch (e: any) {
-      return text(user, `😵 Luma said: ${e?.message}. Text "connect" to retry.`);
-    }
+    // Luma guest registration only needs your email — no login, no captcha.
+    await db().from("users").update({ luma_email: id, email: user.email ?? id, luma_connected: true, pending_action: { type: "partiful_id" } }).eq("id", user.id);
+    await logActivity(user.id, "connected", `Luma ready (email registration as ${id})`);
+    return text(user, `✅ Luma ready! I'll register you as ${id} — Luma sends confirmations straight to your inbox. No login needed.\n\nNow Partiful 🎉 What phone number do you use for Partiful? Text it, "same" for this number, or "skip".`);
+  }
   }
   const prompt = site === "luma"
     ? `In your browser go to https://luma.com/signin . Sign in with ${isEmail ? `the email ${id}` : `the phone number ${id} (switch to "Use phone number" if needed)`} and continue. Luma will send a verification code. Stop there and leave the tab open. If you're already signed in as this account, say so. Reply ONLY JSON {"status":"code_sent"|"already_signed_in"|"error","note":""}`
@@ -303,7 +300,7 @@ export async function handleInbound(phone: string, body: string): Promise<{ repl
     if (!id || !id.includes("@")) return { reply: user.email ? `Is it ${user.email}? Reply with your Luma email 🙂` : "Text the email on your Luma account 🙂" };
     if (id.includes("@") && !user.email) await db().from("users").update({ email: id }).eq("id", user.id);
     void startLogin(user, "luma", id);
-    return { reply: `🔐 Starting Luma sign-in for ${id}…` };
+    return { reply: null };
   }
 
   if (pa.type === "partiful_id") {
