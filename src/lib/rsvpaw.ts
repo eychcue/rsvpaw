@@ -220,10 +220,11 @@ async function startLogin(user: User, site: "luma" | "partiful", id: string) {
     ? `In your browser go to https://luma.com/signin . Sign in with ${isEmail ? `the email ${id}` : `the phone number ${id} (switch to "Use phone number" if needed)`} and continue. Luma will send a verification code. Stop there and leave the tab open. If you're already signed in as this account, say so. Reply ONLY JSON {"status":"code_sent"|"already_signed_in"|"error","note":""}`
     : `In your browser go to https://partiful.com/login . Enter the phone number ${id} and continue. Partiful will text a verification code. Stop there and leave the tab open. If already logged in, say so. Reply ONLY JSON {"status":"code_sent"|"already_signed_in"|"error","note":""}`;
   try {
-    const r = parseJson<{ status: string; note: string }>((await ask(await instanceFor(user), prompt)).text);
+    const res = await ask(await instanceFor(user), prompt);
+    const r = parseJson<{ status: string; note: string }>(res.text);
     if (r.status === "already_signed_in") return finishLogin(user, site, null);
     if (r.status !== "code_sent") return text(user, `😵 ${site === "luma" ? "Luma" : "Partiful"} login hit a snag (${r.note}). Text "connect" to retry.`);
-    await db().from("users").update({ pending_action: { type: "otp", site } }).eq("id", user.id);
+    await db().from("users").update({ pending_action: { type: "otp", site, session: res.sessionId, id } }).eq("id", user.id);
     await text(user, site === "luma"
       ? `📩 Luma just sent a code to ${id}${isEmail ? " (check your inbox)" : ""}. Text it here.`
       : `📲 Partiful just texted a code to ${id}. Text it here.`);
@@ -242,8 +243,9 @@ async function finishLogin(user: User, site: "luma" | "partiful", code: string |
       return text(user, `❌ Luma didn't accept that code (${e?.message}). Text the new code, or "connect" to restart.`);
     }
   } else if (code) {
+    const pa = user.pending_action ?? {};
     const r = parseJson<{ ok: boolean; note?: string }>((await ask(await instanceFor(user),
-      `In the ${site} login tab in your browser, enter the verification code ${code} and finish signing in (fill in name ${user.name ?? ""} if asked). Reply ONLY JSON {"ok":true|false,"note":""}`)).text);
+      `Continue in the SAME ${site} login tab you just used (do not open a new page or re-enter the phone number). Type the verification code ${code} into the code field and submit to finish signing in (fill in name ${user.name ?? ""} if asked). Reply ONLY JSON {"ok":true|false,"note":""}`, pa.session)).text);
     if (!r.ok) return text(user, `❌ That code didn't work${r.note ? ` (${r.note})` : ""}. Text the new code, or "connect" to restart.`);
   }
   await db().from("users").update({ [`${site}_connected`]: true, pending_action: null }).eq("id", user.id);
