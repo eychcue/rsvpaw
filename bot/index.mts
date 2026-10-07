@@ -45,6 +45,7 @@ setInterval(async () => {
 }, 5 * 60_000);
 
 // Inbound
+const pending = new Map<string, { parts: string[]; space: any; timer: any }>();
 for await (const [space, msg] of app.messages) {
   if (msg.content.type === "reaction" && msg.sender?.id) {
     const { emoji, target } = msg.content as any;
@@ -56,17 +57,27 @@ for await (const [space, msg] of app.messages) {
     continue;
   }
   if (msg.content.type !== "text" || !msg.sender?.id) continue;
-  const body = msg.content.text;
-  console.log("←", msg.sender.id, body);
+  // iMessage splits links etc. into separate bubbles; coalesce bursts per sender
+  const from = msg.sender.id;
+  const buf = pending.get(from) ?? { parts: [] as string[], space, timer: undefined as any };
+  buf.parts.push(msg.content.text);
+  buf.space = space;
+  clearTimeout(buf.timer);
+  buf.timer = setTimeout(() => { pending.delete(from); handle(from, buf.parts.join("\n"), buf.space); }, 4000);
+  pending.set(from, buf);
+  console.log("←", from, msg.content.text);
+}
+
+async function handle(from: string, body: string, space: any) {
   try {
     await space.responding(async () => {
-      const { reply, welcome } = await handleInbound(msg.sender!.id, body);
+      const { reply, welcome } = await handleInbound(from, body);
       if (reply) await space.send(reply);
       if (welcome) await sendCard(space);
     });
   } catch (e: any) {
     console.error(e);
-    await msg.reply("😵 Something broke on my end — try again in a sec.");
+    await space.send("😵 Something broke on my end — try again in a sec.");
   }
 }
 
