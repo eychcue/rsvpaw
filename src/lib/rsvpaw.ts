@@ -207,20 +207,20 @@ function gcalLink(ev: any) {
 }
 
 /** Agent37 drives the Luma / Partiful passwordless login; the user texts back the code. */
-async function startLogin(user: User, site: "luma" | "partiful") {
-  const target = site === "luma" ? user.email : user.phone;
+async function startLogin(user: User, site: "luma" | "partiful", id: string) {
+  const isEmail = id.includes("@");
   const prompt = site === "luma"
-    ? `In your browser go to https://luma.com/signin . Enter the email ${target} and continue. Luma will email a 6-digit code. Stop there (leave the tab open). If you're already signed in as ${target}, say so. Reply ONLY JSON {"status":"code_sent"|"already_signed_in"|"error","note":""}`
-    : `In your browser go to https://partiful.com/login . Enter the phone number ${target} and continue. Partiful will text a verification code. Stop there (leave the tab open). If already logged in, say so. Reply ONLY JSON {"status":"code_sent"|"already_signed_in"|"error","note":""}`;
+    ? `In your browser go to https://luma.com/signin . Sign in with ${isEmail ? `the email ${id}` : `the phone number ${id} (switch to "Use phone number" if needed)`} and continue. Luma will send a verification code. Stop there and leave the tab open. If you're already signed in as this account, say so. Reply ONLY JSON {"status":"code_sent"|"already_signed_in"|"error","note":""}`
+    : `In your browser go to https://partiful.com/login . Enter the phone number ${id} and continue. Partiful will text a verification code. Stop there and leave the tab open. If already logged in, say so. Reply ONLY JSON {"status":"code_sent"|"already_signed_in"|"error","note":""}`;
   try {
     const r = parseJson<{ status: string; note: string }>((await ask(await instanceFor(user), prompt)).text);
     if (r.status === "already_signed_in") return finishLogin(user, site, null);
-    if (r.status !== "code_sent") return text(user, `😵 ${site} login hit a snag (${r.note}). Text "connect" to retry.`);
+    if (r.status !== "code_sent") return text(user, `😵 ${site === "luma" ? "Luma" : "Partiful"} login hit a snag (${r.note}). Text "connect" to retry.`);
     await db().from("users").update({ pending_action: { type: "otp", site } }).eq("id", user.id);
     await text(user, site === "luma"
-      ? `📩 Luma just emailed a 6-digit code to ${target}. Text it here.`
-      : `📲 Partiful just texted you a code. Text it here.`);
-  } catch (e: any) {
+      ? `📩 Luma just sent a code to ${id}${isEmail ? " (check your inbox)" : ""}. Text it here.`
+      : `📲 Partiful just texted a code to ${id}. Text it here.`);
+  } catch {
     await text(user, `😵 Couldn't reach ${site} right now. Text "connect" to retry.`);
   }
 }
@@ -234,7 +234,8 @@ async function finishLogin(user: User, site: "luma" | "partiful", code: string |
   await db().from("users").update({ [`${site}_connected`]: true, pending_action: null }).eq("id", user.id);
   await logActivity(user.id, "connected", `${site} connected via iMessage OTP`);
   if (site === "luma") {
-    await text(user, `✅ Luma connected!\n\nWant Partiful too? Reply "partiful" — or "find events" to get started.`);
+    await db().from("users").update({ pending_action: { type: "partiful_id" } }).eq("id", user.id);
+    await text(user, `✅ Luma connected!\n\nNow Partiful 🎉 What phone number do you use for Partiful? Text it, or "same" for this number, or "skip".`);
   } else {
     await text(user, `✅ Partiful connected! You're all set. Finding events for you now… 🔎`);
     void discoverFor(user.id);
@@ -274,10 +275,28 @@ export async function handleInbound(phone: string, body: string): Promise<{ repl
     const p = parseJson<Record<string, string>>(out);
     const patch = Object.fromEntries(Object.entries(p).filter(([k, v]) => v && !(k === "name" && user.name)));
     await db().from("users").update({ ...patch, pending_action: null }).eq("id", user.id);
-    const email = p.email || user.email;
-    if (!email) return { reply: "Got it! What email do you use for Luma?" };
-    void startLogin({ ...user, ...patch, email } as User, "luma");
-    return { reply: `✅ Profile saved. Now let's connect Luma (no password needed) — sending a login code to ${email}…` };
+    await db().from("users").update({ pending_action: { type: "luma_id" } }).eq("id", user.id);
+    return { reply: `✅ Profile saved!\n\nNow let's connect Luma 🔗 (no password, I never see one). What do you sign in to Luma with — email or phone number? Just text it.` };
+  }
+
+  if (pa.type === "luma_id") {
+    const id = body.match(/[\w.+-]+@[\w-]+\.[\w.]+/)?.[0] ?? normPhone(body);
+    if (!id) return { reply: "Text the email or phone number you use for Luma 🙂" };
+    if (id.includes("@") && !user.email) await db().from("users").update({ email: id }).eq("id", user.id);
+    void startLogin(user, "luma", id);
+    return { reply: `🔐 Starting Luma sign-in for ${id}…` };
+  }
+
+  if (pa.type === "partiful_id") {
+    if (no) {
+      await db().from("users").update({ pending_action: null }).eq("id", user.id);
+      void discoverFor(user.id);
+      return { reply: "👍 Skipped Partiful. Finding events for you now… 🔎" };
+    }
+    const id = /same|this/.test(t) ? user.phone : normPhone(body);
+    if (!id) return { reply: `Text your Partiful phone number, "same", or "skip".` };
+    void startLogin(user, "partiful", id);
+    return { reply: `🔐 Starting Partiful sign-in for ${id}…` };
   }
 
   if (pa.type === "otp") {
@@ -288,13 +307,12 @@ export async function handleInbound(phone: string, body: string): Promise<{ repl
   }
 
   if (/^connect\b|^luma\b/.test(t)) {
-    if (!user.email) return { reply: "What email do you use for Luma?" };
-    void startLogin(user, "luma");
-    return { reply: "🔗 Connecting Luma…" };
+    await db().from("users").update({ pending_action: { type: "luma_id" } }).eq("id", user.id);
+    return { reply: "🔗 What do you sign in to Luma with — email or phone number?" };
   }
   if (/^partiful\b/.test(t)) {
-    void startLogin(user, "partiful");
-    return { reply: "🔗 Connecting Partiful…" };
+    await db().from("users").update({ pending_action: { type: "partiful_id" } }).eq("id", user.id);
+    return { reply: `🔗 What phone number do you use for Partiful? (or "same")` };
   }
 
   if (pa.type === "pick" && (/^[\d ,]+$/.test(t) || t === "all" || no)) {
@@ -345,4 +363,12 @@ export async function handleReaction(phone: string, emoji: string, targetMessage
   return dir === "like"
     ? `${emoji} Got it — signing you up for ${(sent as any).events?.name}. I'll find more like this.`
     : `👎 Noted — I'll skip events like ${(sent as any).events?.name}.`;
+}
+
+function normPhone(s: string) {
+  const d = s.replace(/[^\d+]/g, "");
+  if (/^\+\d{10,15}$/.test(d)) return d;
+  if (/^\d{10}$/.test(d)) return "+1" + d;
+  if (/^1\d{10}$/.test(d)) return "+" + d;
+  return null;
 }
