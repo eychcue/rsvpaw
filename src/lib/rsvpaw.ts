@@ -92,14 +92,17 @@ export async function discoverFor(userId: string, opts: { limit?: number; notify
     const closed = top.filter((_, i) => !openFlags[i]);
     if (closed.length) await db().from("user_events").update({ status: "closed" }).eq("user_id", user.id).in("event_id", closed.map((c) => c.event_id));
     const ranked = all.filter((r) => !closed.includes(r));
-    const ready = !!(user.email && (user as any).luma_connected);
+    // Only auto-join once the agent has learned your taste (3+ likes) and can register you
+    const { count: likes } = await db().from("user_events").select("id", { count: "exact", head: true }).eq("user_id", user.id).eq("swipe", "like");
+    const ready = !!(user.email && (user as any).luma_connected) && (likes ?? 0) >= 3;
     const auto = ready ? ranked.filter((r) => r.score >= user.auto_join_threshold).slice(0, 2) : [];
     const picks = ranked.filter((r) => !auto.includes(r)).slice(0, 3);
     // Header + one short, tapback-able text per pick
     const head = [`🐾 Scanned ${found.length} SF events — your top picks:`];
     if (auto.length) head.push("", ...auto.map((r) => `✅ Auto-joining ${r.ev.name} (${r.score}%)`));
     if (picks.length) head.push("", `❤️ or 👍 a pick to join · 👎 to pass (I learn from both). Or reply ${picks.map((_, i) => i + 1).join("/")}.`);
-    if (!ready) head.push("(Connect Luma first so I can sign you up — text \"connect\")");
+    if (!(user as any).luma_connected) head.push("(Connect Luma first so I can sign you up — text \"connect\")");
+    else if (!ready) head.push(`(❤️ ${3 - (likes ?? 0)} more and I'll start auto-joining your top matches)`);
     await db().from("users").update({ pending_action: { type: "pick", event_ids: picks.map((p) => p.event_id) } }).eq("id", user.id);
     await text(user, head.join("\n").trim());
     const nums = ["1️⃣", "2️⃣", "3️⃣"];
@@ -150,7 +153,7 @@ Use "pending" if it says the host must approve, "approved" if you're confirmed/g
     const { text: out } = await ask(await instanceFor(user), prompt);
     const r = parseJson<{ status: string; note: string; answers?: Record<string, string> }>(out);
     const status = ["approved", "pending", "waitlisted"].includes(r.status) ? r.status : "failed";
-    await setStatus(user, ev, status, r.note, opts.quiet && status === "failed");
+    await setStatus(user, ev, status, r.note);
   } catch (e: any) {
     await setStatus(user, ev, "failed", String(e?.message ?? e).slice(0, 200), opts.quiet);
   }
@@ -182,7 +185,7 @@ export async function setStatus(user: User, ev: any, status: string, note?: stri
     approved: `🎉 You're IN for "${ev.name}" (${fmtTime(ev.start_at)}). Add to calendar: ${calendar_url}`,
     pending: `📝 Applied to "${ev.name}". Host has to approve — I'll ping you when you're in.`,
     waitlisted: `⏳ "${ev.name}" is full — you're on the waitlist.`,
-    failed: `⚠️ Couldn't auto-register for "${ev.name}" — tap to finish: ${ev.url}`,
+    failed: `⚠️ Couldn't register you for "${ev.name}"${note ? ` (${note.split(/[.;]/)[0].slice(0, 90)})` : ""}. Finish here: ${ev.url}`,
     cancelled: `👋 Cancelled your RSVP to "${ev.name}" — the host now knows you can't make it.`,
   };
   if (msg[status] && !silent) await text(user, msg[status]);
