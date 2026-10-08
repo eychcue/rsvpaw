@@ -140,6 +140,7 @@ Register as a guest using my details below (no Luma login needed — if it asks 
 My profile:
 - Name: ${user.name}
 - Email: ${user.email}
+- Phone: ${user.phone}
 - Company: ${user.company ?? ""}
 - Role: ${user.role ?? ""}
 - LinkedIn: ${user.linkedin ?? ""}
@@ -151,7 +152,12 @@ Use "pending" if it says the host must approve, "approved" if you're confirmed/g
 
   try {
     const { text: out } = await ask(await instanceFor(user), prompt);
-    const r = parseJson<{ status: string; note: string; answers?: Record<string, string> }>(out);
+    let r: { status: string; note: string; answers?: Record<string, string> };
+    try { r = parseJson(out); }
+    catch { // agent answered in prose — infer status from the text
+      const t = out.toLowerCase();
+      r = { status: /approv|you're (in|going)|registered|confirmed/.test(t) && !/not (been )?(submitted|registered)/.test(t) ? (/pending|approval/.test(t) ? "pending" : "approved") : "failed", note: out.replace(/\s+/g, " ").trim().slice(0, 300) };
+    }
     const status = ["approved", "pending", "waitlisted"].includes(r.status) ? r.status : "failed";
     await setStatus(user, ev, status, r.note);
   } catch (e: any) {
