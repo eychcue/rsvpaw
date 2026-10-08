@@ -191,7 +191,7 @@ export async function setStatus(user: User, ev: any, status: string, note?: stri
     approved: `🎉 You're IN for "${ev.name}" (${fmtTime(ev.start_at)}). Add to calendar: ${calendar_url}`,
     pending: `📝 Applied to "${ev.name}". Host has to approve — I'll ping you when you're in.`,
     waitlisted: `⏳ "${ev.name}" is full — you're on the waitlist.`,
-    failed: `⚠️ Couldn't register you for "${ev.name}"${note ? ` (${note.split(/[.;]/)[0].slice(0, 90)})` : ""}. Finish here: ${ev.url}`,
+    failed: failedText(ev, note),
     cancelled: `👋 Cancelled your RSVP to "${ev.name}" — the host now knows you can't make it.`,
   };
   if (msg[status] && !silent) await text(user, msg[status]);
@@ -430,4 +430,16 @@ function normPhone(s: string) {
   if (/^\d{10}$/.test(d)) return "+1" + d;
   if (/^1\d{10}$/.test(d)) return "+" + d;
   return null;
+}
+
+/** Human-friendly failure text: a human check after filling is a hand-off, not an error. */
+function failedText(ev: any, note?: string) {
+  const n = note ?? "";
+  if (/cloudflare|captcha|verif|human|robot/i.test(n))
+    return /fill/i.test(n)
+      ? `✍️ Filled out your registration for "${ev.name}". Luma just needs you to tap Submit: ${ev.url}`
+      : `👆 Luma wants a quick human check for "${ev.name}" — tap to register: ${ev.url}`;
+  if (/question|answer|which option/i.test(n))
+    return `❓ "${ev.name}" asks something only you can answer — tap to finish (takes 10s): ${ev.url}`;
+  return `⚠️ Couldn't register you for "${ev.name}" — tap to finish: ${ev.url}`;
 }
